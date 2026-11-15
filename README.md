@@ -15,6 +15,7 @@ Wi-Fi, with your music and calls on the dash's gold band. No Google API key, no 
 - [Known limits](#known-limits-beta)
 - [Report a problem](#report-a-problem)
 - [Build it yourself](#build-it-yourself)
+- [Changelog](CHANGELOG.md)
 
 ## Install
 
