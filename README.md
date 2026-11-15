@@ -119,7 +119,7 @@ Every release lists the commit it was built from, the APK's SHA-256 and the sign
 ```
 package:      nav.dash
 certificate:  CN=Dash Nav
-cert SHA-256: 9e:30:70:2e:e5:4f:ee:fb:f1:2c:30:91:46:32:5e:14:ce:b4:04:14:44:14:42:97:87:60:bc:95:48:fc:8c:cb:9
+cert SHA-256: 9e:30:70:2e:e5:4f:ee:fb:f1:2c:30:91:46:32:5e:14:ce:b4:04:14:44:14:42:97:87:60:bc:95:48:fc:8c:b9
 ```
 
 - **On the phone:** the app's package is `nav.dash` (Settings → Apps → Dash Nav). Android only installs
