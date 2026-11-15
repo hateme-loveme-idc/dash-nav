@@ -82,6 +82,26 @@ public final class DashLink {
     // health
     private volatile long lastRxMs, firstAckMs;
     public volatile long acksKey, acksFrame, txPackets;
+    /** Every kind of message the dash sends, counted (type/sub=first value byte), to learn what a real dash says. */
+    private final java.util.Map<String, Integer> seen = new java.util.TreeMap<>(), reported = new java.util.HashMap<>();
+    private final java.util.Set<String> sampled = new java.util.HashSet<>();
+
+    /** New messages since the last call, e.g. "09/04=55 ×118 · 09/00=15 ×2 · 0A/01 len6 ×1 [0a 1b …]" (samples once per kind). */
+    public synchronized String messageSummary() {
+        StringBuilder b = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> e : seen.entrySet()) {
+            int d = e.getValue() - reported.getOrDefault(e.getKey(), 0);
+            if (d > 0) { if (b.length() > 0) b.append(" · "); b.append(e.getKey()).append(" ×").append(d); reported.put(e.getKey(), e.getValue()); }
+        }
+        return b.toString();
+    }
+
+    private synchronized void count(K1g.Tlv t) {
+        if (t.type == 0x07) return;   // handshake: keys, never logged
+        String k = String.format(java.util.Locale.US, "%02X/%02X", t.type, t.sub) + (t.value.length == 1 ? String.format("=%02X", t.u8()) : " len" + t.value.length);
+        seen.merge(k, 1, Integer::sum);
+        if (sampled.add(k) && t.value.length > 1) seen.merge(k + " first [" + K1g.hex(t.value, 12) + "]", 1, Integer::sum);
+    }
     private volatile boolean netBlocked;
     // caller card + music widget
     private volatile String caller; private boolean callShown;
@@ -333,7 +353,7 @@ public final class DashLink {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
                 sock.receive(p);
                 lastRxMs = System.currentTimeMillis();
-                for (K1g.Tlv t : K1g.parse(p.getData(), p.getLength())) handle(t);
+                for (K1g.Tlv t : K1g.parse(p.getData(), p.getLength())) { count(t); handle(t); }
             } catch (SocketTimeoutException ignored) {
             } catch (Exception e) {
                 if (wanted && !sock.isClosed()) Log.w(TAG, "rx: " + e.getMessage());

@@ -97,9 +97,11 @@ public class MainActivity extends Activity {
                 + "Everything else (switching the dash between navigation and music, centre press) is the dash's own.", 13, MUTED, false));
         joy = text("", 13, INK, false); joy.setPadding(0, dp(8), 0, 0); col.addView(joy);
 
-        col.addView(section("Advanced"));
-        col.addView(toggleRow("Test mode (virtual dash)", "Sends to a test dash instead of the bike. Leave off when riding.",
-                settings.testMode(), settings::testMode));
+        if (BuildConfig.DEBUG) {   // developer builds only: a release can never be left talking to the virtual dash
+            col.addView(section("Advanced"));
+            col.addView(toggleRow("Test mode (virtual dash)", "Sends to a test dash instead of the bike. Leave off when riding.",
+                    settings.testMode(), settings::testMode));
+        }
 
         TextView foot = text("v" + BuildConfig.VERSION_NAME + " · Tripper Dash firmware 11.61 and newer", 12, MUTED, false);
         foot.setPadding(0, dp(18), 0, 0); col.addView(foot);

@@ -11,7 +11,7 @@ final class Settings {
     Settings(Context c) { p = c.getSharedPreferences("settings", Context.MODE_PRIVATE); }
 
     /** Talk to a virtual dash instead of the bike (development / testing). */
-    boolean testMode() { return p.getBoolean("test_mode", false); }
+    boolean testMode() { return BuildConfig.DEBUG && p.getBoolean("test_mode", false); }
     void testMode(boolean v) { p.edit().putBoolean("test_mode", v).apply(); }
     String testHost() { return p.getString("test_host", "127.0.0.1"); }
     void testHost(String v) { p.edit().putString("test_host", v).apply(); }

@@ -1,6 +1,6 @@
 # Dash Nav
 
-**Real Google Maps on the Royal Enfield Himalayan 450 Tripper dash.** Android 15+, dash firmware 11.61+.
+**Real Google Maps on the Royal Enfield Himalayan 450 Tripper dash.** Android 14+, dash firmware 11.61+.
 
 Google Maps runs on a hidden screen inside your phone, and Dash Nav streams it to the dash over the dash's own
 Wi-Fi, with your music and calls on the dash's gold band. No Google API key, no account, no servers.
@@ -18,7 +18,7 @@ Wi-Fi, with your music and calls on the dash's gold band. No Google API key, no 
 
 ## Install
 
-You need an Android 15+ phone and a Himalayan 450 with the Tripper dash on firmware 11.61 or newer.
+You need an Android 14+ phone and a Himalayan 450 with the Tripper dash on firmware 11.61 or newer.
 
 ### 1. Shizuku
 

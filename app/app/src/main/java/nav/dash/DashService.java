@@ -157,7 +157,7 @@ public class DashService extends Service {
                 HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE | HardwareBuffer.USAGE_GPU_COLOR_OUTPUT);
         long lastSnap = 0, lastAdapt = 0, start = SystemClock.elapsedRealtime(), sentAtAdapt = 0, ackedAtAdapt = 0;
         long videoAt = SystemClock.elapsedRealtime();
-        long lastKey = 0, lastLossCheck = 0, sentAtLoss = 0, ackedAtLoss = 0, lost = 0, lastStat = 0;
+        long lastStat = 0, sentAtStat = 0, bytesAtStat = 0, keysAtStat = 0, ackFAtStat = 0, ackKAtStat = 0, lastBlackCheck = 0;
         RideVideo video = null;
         Image held = null;
         try {
@@ -215,30 +215,28 @@ public class DashService extends Service {
                 if (perf[3] == 24) { Log.i(TAG, String.format(Locale.US, "perf ms/frame: acquire %.1f lock %.1f draw+post %.1f · target %d fps", perf[0] / 24e6, perf[1] / 24e6, perf[2] / 24e6, fps)); perf[0] = perf[1] = perf[2] = perf[3] = 0; }
                 if (MainActivity.visible && t0 - lastSnap > 3_000) { snapshot(frame, overlay, nav); lastSnap = t0; }
                 if (video != null && t0 - videoAt > (BuildConfig.DEBUG ? 60_000 : 5 * 60_000)) { enc.rotate(new RideVideo(this)); videoAt = t0; }
-                // keyframe every second of real time: a frame the dash lost over Wi-Fi smears at most 1 s
-                if (t0 - lastKey >= 1000) { enc.keyframe(); lastKey = t0; }
+                if (mapsOnDash && t0 - lastBlackCheck >= 2_000) { lastBlackCheck = t0; checkMapsDrawing(frame, t0); }
                 DashLink l = link;
-                if (l != null && l.streaming()) {
+                if (l != null && l.streaming() && t0 - lastAdapt > 3_000) {
+                    // 1.2.0's control (proven on the real dash): the encoder makes its own keyframe every 12 frames
                     long sent = v.frames, acked = l.acksKey + l.acksFrame;
-                    if (t0 - lastLossCheck >= 1000) {                  // the dash confirms every frame it decodes
-                        long ds = sent - sentAtLoss, da = acked - ackedAtLoss;
-                        if (lastLossCheck > 0 && ds >= 3 && da < ds - 2) { enc.keyframe(); lastKey = t0; lost += ds - da; }
-                        sentAtLoss = sent; ackedAtLoss = acked; lastLossCheck = t0;
+                    long ds = sent - sentAtAdapt, da = acked - ackedAtAdapt;
+                    if (lastAdapt > 0 && ds > 0 && acked > 0) {
+                        double ratio = (double) da / ds; int before = fps;
+                        if (ratio >= 0.92 && fps < FPS_MAX) fps++;
+                        else if (ratio < 0.75 && fps > FPS_MIN) fps = Math.max(FPS_MIN, fps - 2);
+                        if (fps != before) enc.bitrate(fps);
+                        detail = String.format(Locale.US, "%d fps to the dash · it showed %d of the last %d frames", fps, da, ds);
                     }
-                    if (t0 - lastAdapt > 3_000) {
-                        long ds = sent - sentAtAdapt, da = acked - ackedAtAdapt;
-                        if (lastAdapt > 0 && ds > 0 && acked > 0) {
-                            double secs = (t0 - lastAdapt) / 1000.0, made = ds / secs, shown = da / secs;
-                            int before = fps;
-                            // climb only if the phone really delivers the current rate AND the dash shows it all
-                            if (made >= fps * 0.85 && shown >= made * 0.92 && fps < FPS_MAX) fps++;
-                            else if (shown < made * 0.75 || made < fps * 0.6) fps = Math.max(FPS_MIN, (int) Math.round(Math.min(made, shown)) + 1);
-                            enc.bitrate(fps);
-                            detail = String.format(Locale.US, "%d fps to the dash · phone made %.1f/s · dash showed %.1f/s", fps, made, shown);
-                            if (fps != before || t0 - lastStat > 30_000) { RideLog.add("stream: target " + before + "→" + fps + " fps · made " + String.format(Locale.US, "%.1f", made) + "/s · dash showed " + String.format(Locale.US, "%.1f", shown) + "/s · lost so far " + lost); lastStat = t0; }
-                        }
-                        sentAtAdapt = sent; ackedAtAdapt = acked; lastAdapt = t0;
-                    }
+                    if (lastAdapt > 0 && t0 - lastStat >= 30_000) {
+                        double secs = (t0 - lastStat) / 1000.0;
+                        RideLog.add(String.format(Locale.US, "stream: %d fps · sent %.1f/s · %.0f kbps · keyframes %d · dash acks: frame %d, keyframe %d · maps on dash %s · phone %.1f °C",
+                                fps, (sent - sentAtStat) / secs, (v.bytes - bytesAtStat) * 8 / secs / 1000, v.keyframes - keysAtStat,
+                                l.acksFrame - ackFAtStat, l.acksKey - ackKAtStat, mapsOnDash ? "yes" : "no", batteryTemp()));
+                        String msgs = l.messageSummary(); if (!msgs.isEmpty()) RideLog.add("dash sent: " + msgs);
+                        sentAtStat = sent; bytesAtStat = v.bytes; keysAtStat = v.keyframes; ackFAtStat = l.acksFrame; ackKAtStat = l.acksKey; lastStat = t0;
+                    } else if (lastStat == 0) { lastStat = t0; sentAtStat = sent; bytesAtStat = v.bytes; keysAtStat = v.keyframes; ackFAtStat = l.acksFrame; ackKAtStat = l.acksKey; }
+                    sentAtAdapt = sent; ackedAtAdapt = acked; lastAdapt = t0;
                 }
                 SystemClock.sleep(Math.max(0, 1000 / fps - (SystemClock.elapsedRealtime() - t0)));
             }
@@ -294,6 +292,43 @@ public class DashService extends Service {
         set("Google Maps didn't start navigation: start it in Maps");
     }
 
+    private volatile long blackSince; private volatile int blackFixes;
+
+    /** Maps on the dash but drawing nothing (seen on a real ride: black map behind the turn card): log it and bring Maps
+     *  to the front of the hidden display, which makes it draw again. At most 3 nudges per takeover. */
+    private void checkMapsDrawing(Bitmap frame, long now) {
+        boolean black = true;
+        if (frame != null) {
+            try {
+                Bitmap soft = frame.copy(Bitmap.Config.ARGB_8888, false);
+                int w = soft.getWidth(), h = soft.getHeight(), dark = 0, n = 0;
+                for (int y = 1; y < 8; y++) for (int x = 1; x < 12; x++) {
+                    int c = soft.getPixel(x * w / 12, y * h / 8); n++;
+                    if (((c >> 16 & 0xFF) * 3 + (c >> 8 & 0xFF) * 6 + (c & 0xFF)) / 10 < 10) dark++;
+                }
+                soft.recycle(); black = dark >= n * 0.97;
+            } catch (Exception e) { return; }
+        }
+        if (!black) { if (blackSince > 0) RideLog.add("maps: drawing again"); blackSince = 0; return; }
+        if (blackSince == 0) { blackSince = now; RideLog.add("maps: on the dash but " + (frame == null ? "no picture yet" : "black")); return; }
+        if (now - blackSince >= 5_000 && blackFixes < 3) {
+            blackFixes++; blackSince = now;
+            RideLog.add("maps: still black: bringing it to the front (" + blackFixes + "/3)");
+            IDashHelper hp = helper; if (hp != null) resumeMaps(hp);
+        }
+    }
+
+    /** Bring the existing Maps task to the front of the dash display, as a launcher tap would (no new map, route kept). */
+    private void resumeMaps(IDashHelper hp) {
+        try { hp.startOnDisplay(displayId, "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n " + MAPS + "/com.google.android.maps.MapsActivity"); }
+        catch (Exception e) { Log.w(TAG, "resume maps", e); }
+    }
+
+    private float batteryTemp() {
+        android.content.Intent b = registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+        return b == null ? 0 : b.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) / 10f;
+    }
+
     /** Navigation is running on the phone: move Maps (as it is: route, stops, voice) onto the hidden display. */
     private void takeOver() {
         IDashHelper hp = helper; if (hp == null || mapsOnDash || movingMaps) return;
@@ -301,8 +336,21 @@ public class DashService extends Service {
         try {
             String[] task = hp.mapsTask().trim().split(" ");
             if (task.length != 2) return;
+            // Maps that went to the background (Home, another app) before the move draws only black on the hidden
+            // display (reproduced on the test phone). Bring it to the front on the phone first, like opening it, so it
+            // is fully running and drawing; then move it. If it's already in front this changes nothing.
+            if (Integer.parseInt(task[1]) == 0) {
+                hp.startOnDisplay(0, "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -n " + MAPS + "/com.google.android.maps.MapsActivity");
+                SystemClock.sleep(1200);
+                task = hp.mapsTask().trim().split(" ");
+                if (task.length != 2) return;
+            }
             hp.moveTask(Integer.parseInt(task[0]), displayId);
-            mapsOnDash = true; navLostAt = 0;
+            mapsOnDash = true; navLostAt = 0; blackSince = 0; blackFixes = 0;
+            RideLog.add("maps: moved to the dash (task " + task[0] + ")");
+            // a task that was paused when it moved (navigation started while the dash was already running) can stay
+            // paused on the hidden display and draw nothing: resume it, like tapping Maps' icon (keeps the route)
+            SystemClock.sleep(400); resumeMaps(hp);
             set("On the dash");
             Encoder e = enc; if (e != null) e.keyframe();
             updatePhoneScreen();
@@ -318,6 +366,7 @@ public class DashService extends Service {
             String[] task = hp.mapsTask().trim().split(" ");
             if (task.length == 2 && Integer.parseInt(task[1]) == displayId) hp.moveTask(Integer.parseInt(task[0]), 0);
             mapsOnDash = false; dest = null;
+            RideLog.add("maps: back on the phone (navigation ended)");
             set("Waiting for navigation: start it in Google Maps");
             updatePhoneScreen();
         } catch (Exception e) { Log.w(TAG, "giveBack", e); }
@@ -669,7 +718,7 @@ public class DashService extends Service {
             f.setInteger(MediaFormat.KEY_BIT_RATE, rateFor(FPS_START));
             f.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
             f.setInteger(MediaFormat.KEY_FRAME_RATE, FPS_MAX);
-            f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 10);   // keyframes are requested every second of real time instead
+            f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);    // one keyframe per 12 frames (1.2.0: readable on the real dash)
             f.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline);
             f.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel41);
             f.setInteger(MediaFormat.KEY_PRIORITY, 0);
