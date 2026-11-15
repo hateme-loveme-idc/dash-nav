@@ -1,0 +1,17 @@
+.gradle/
+build/
+**/build/
+local.properties
+*.apk
+keys/
+vdash/runs/
+vdash/ride/*.out
+app/hosttest/out/
+dist/
+vdash/ride/r.json
+vdash/ride/r4-*.json
+vdash/ride/route.json
+vdash/ride/jm.json
+vdash/rides/
+vdash/ride/*.json
+vdash/ride/dest*.txt
