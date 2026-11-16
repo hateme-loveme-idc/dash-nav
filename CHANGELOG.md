@@ -1,14 +1,5 @@
 # Changelog
 
-## 1.1.0
-
-- **RPM bar:** engine RPM as flat segments along the top rim of the map, like the stock dash (white on dark maps,
-  dark on light maps, red near the rev limit). Needs a Bluetooth OBD-II adapter (ELM327 type, Bluetooth LE or
-  classic) on the bike's diagnostic port: Settings › RPM bar › Choose OBD adapter. Hidden when there's no live reading.
-- **Bike data test:** a button that records everything the dash sends while you flip through its screens, asks the
-  dash for data with test requests (bike parked), and reads the standard engine values from the OBD adapter.
-  Saves a report to Download/Dash Nav, so the next version can show odometer, range and more.
-
 ## 1.0.1
 
 Updates over 1.0.0 in place (same signing key, settings kept). Android 14+, dash firmware 11.61+.

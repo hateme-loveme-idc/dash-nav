@@ -86,20 +86,12 @@ You can also start Dash Nav first: until you start a route, the dash shows the t
 **Phone screen:** Dash Nav never turns your screen off by itself. Press power to turn the phone's screen off:
 the phone stays awake underneath, so the dash keeps its map. Press power again to get it back.
 
-## RPM bar and bike data (1.1.0)
-
-- **RPM bar:** plug a Bluetooth OBD-II adapter (ELM327 type) into the bike's diagnostic port, then Settings ›
-  RPM bar › Choose OBD adapter (pair classic-Bluetooth adapters in Android's settings first) and turn on Show RPM bar.
-- **Test bike data:** connected to the bike and parked, tap Test bike data, flip through the dash's screens for the
-  first minute, and send the report from Download/Dash Nav with an issue. It tells us what the dash can share.
-
 ## Privacy
 
 - **None of your data leaves your phone.** The app's only network traffic is the video and control stream to your
   dash, over the dash's own Wi-Fi. There are no servers, no account, no analytics and no ads, and the only library
   is Shizuku's API. You can check: the code makes no HTTP calls.
 - Contacts are only read to put a caller's name on the dash.
-- The OBD adapter is only read for engine values (never the VIN), on the phone.
 - Ride logs (`Download/Dash Nav/ride-*.txt`) contain app events only (link state, frame rate, joystick, call
   ringing/ended): no locations, contact names or phone numbers. They do include your dash's Wi-Fi name (`RE_…`).
 - Ride videos (Settings → Save dash video) are **off** by default and stay on your phone. They show your real
