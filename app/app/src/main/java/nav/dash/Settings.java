@@ -35,6 +35,17 @@ final class Settings {
     String dashBssid() { return p.getString("dash_bssid", ""); }
     void dash(String ssid, String bssid) { p.edit().putString("dash_ssid", ssid).putString("dash_bssid", bssid).apply(); }
 
+    /** RPM bar along the top of the map, fed by a Bluetooth OBD-II adapter (ELM327 type). */
+    boolean rpmBar() { return p.getBoolean("rpm_bar", false); }
+    void rpmBar(boolean v) { p.edit().putBoolean("rpm_bar", v).apply(); }
+    String obdAddress() { return p.getString("obd_address", ""); }
+    String obdName() { return p.getString("obd_name", ""); }
+    boolean obdClassic() { return p.getBoolean("obd_classic", false); }
+    void obd(String address, String name, boolean classic) { p.edit().putString("obd_address", address).putString("obd_name", name).putBoolean("obd_classic", classic).apply(); }
+    /** Full scale and red zone of the bar (Himalayan 450: peak power at 8,000 rpm, rev limit near 9,000). */
+    int rpmMax() { return p.getInt("rpm_max", 9000); }
+    int rpmRedline() { return p.getInt("rpm_redline", 8000); }
+
     /** Dash Wi-Fi password (factory default 12345678). */
     String passphrase() { return p.getString("passphrase", "12345678"); }
 

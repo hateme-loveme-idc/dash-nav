@@ -88,6 +88,24 @@ public class MainActivity extends Activity {
                 settings.wallpaper(), v -> { settings.wallpaper(v); showWallpaper(); }));
         showWallpaper();
 
+        col.addView(section("RPM bar"));
+        col.addView(text("Engine RPM as segments along the top of the map, from a Bluetooth OBD-II adapter (ELM327 type) on the "
+                + "bike's diagnostic port. Classic-Bluetooth adapters must be paired in Android's Bluetooth settings first.", 12, MUTED, false));
+        col.addView(toggleRow("Show RPM bar", "Needs an adapter (below). Hidden when there's no live reading",
+                settings.rpmBar(), settings::rpmBar));
+        Button obdPick = smallButton(settings.obdName().isEmpty() ? "Choose OBD adapter" : "Adapter: " + settings.obdName());
+        obdPick.setOnClickListener(v -> chooseObd(obdPick));
+        col.addView(obdPick, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
+        obdState = text("", 13, INK, false); obdState.setPadding(0, dp(6), 0, 0); col.addView(obdState);
+
+        col.addView(section("Bike data test"));
+        col.addView(text("Finds out what your dash (and OBD adapter) can tell Dash Nav: odometer, range, fuel, RPM… "
+                + "Run it while connected to the bike, parked. Takes about 5 minutes; saves a report to Download/Dash Nav.", 12, MUTED, false));
+        Button probe = smallButton("Test bike data");
+        probe.setOnClickListener(v -> startProbe());
+        col.addView(probe, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
+        probeState = text("", 13, INK, false); probeState.setPadding(0, dp(6), 0, 0); col.addView(probeState);
+
         col.addView(section("Joystick on the dash"));
         col.addView(text("While the dash shows the Dash Nav picture:\n"
                 + "•  Down, Down: menu (play / pause, next, previous, phone screen on/off)\n"
@@ -175,7 +193,68 @@ public class MainActivity extends Activity {
         File snap = new File(getExternalFilesDir(null), "snap.png");
         if (on && snap.exists()) { preview.setVisibility(View.VISIBLE); preview.setImageBitmap(Wallpaper.preview(BitmapFactory.decodeFile(snap.getPath()), "")); }   // as it looks on the round dial
         else preview.setVisibility(View.GONE);
+        probeState.setText(DashService.probeStatus);
+        ObdLink o = DashService.obdNow;
+        obdState.setText(!settings.rpmBar() ? "" : o != null ? "OBD: " + o.status
+                : settings.obdAddress().isEmpty() ? "Choose your adapter to use the bar" : "Starts with Start on dash");
         h.postDelayed(this::tick, 1500);
+    }
+
+    private TextView probeState;
+
+    private void startProbe() {
+        if (!DashService.active || DashService.linkNow == null || !DashService.linkNow.streaming()) {
+            DashService.probeStatus = "Connect to the bike first: tap Start on dash with the ignition on"; return;
+        }
+        if (DashService.speedKmh > 5) { DashService.probeStatus = "Stop the bike first: the test only runs while parked"; return; }
+        new android.app.AlertDialog.Builder(this).setTitle("Test bike data?")
+                .setMessage("Bike parked, ignition on.\n\n1. For 60 s, flip through your dash's screens (trip, fuel, range, settings) with the joystick.\n"
+                        + "2. Dash Nav then sends test requests to the dash for about 3½ minutes. The dash may glitch or reconnect; that's expected. "
+                        + "Don't ride during the test.\n3. If you chose an OBD adapter, it reads the engine values.\n\nThe report is saved to Download/Dash Nav.")
+                .setPositiveButton("Start test", (d, w) -> startForegroundService(new Intent(this, DashService.class).putExtra("probe", true)))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    // ---- OBD adapter picker: paired classic devices + a short Bluetooth LE scan ----
+    private TextView obdState;
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void chooseObd(Button label) {
+        String[] need = {Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT};
+        for (String p : need) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) { requestPermissions(need, 9); return; }
+        android.bluetooth.BluetoothAdapter ad = getSystemService(android.bluetooth.BluetoothManager.class).getAdapter();
+        if (ad == null || !ad.isEnabled()) { android.widget.Toast.makeText(this, "Turn on Bluetooth first", android.widget.Toast.LENGTH_SHORT).show(); return; }
+        java.util.LinkedHashMap<String, String[]> found = new java.util.LinkedHashMap<>();   // address -> {name, "classic"|"le"}
+        for (android.bluetooth.BluetoothDevice d : ad.getBondedDevices())
+            if (d.getType() != android.bluetooth.BluetoothDevice.DEVICE_TYPE_LE && d.getName() != null) found.put(d.getAddress(), new String[]{d.getName(), "classic"});
+        android.bluetooth.le.BluetoothLeScanner sc = ad.getBluetoothLeScanner();
+        android.bluetooth.le.ScanCallback cb = new android.bluetooth.le.ScanCallback() {
+            @Override public void onScanResult(int type, android.bluetooth.le.ScanResult r) {
+                String n = r.getDevice().getName(); if (n == null && r.getScanRecord() != null) n = r.getScanRecord().getDeviceName();
+                if (n != null && !found.containsKey(r.getDevice().getAddress())) found.put(r.getDevice().getAddress(), new String[]{n, "le"});
+            }
+        };
+        android.app.ProgressDialog wait = android.app.ProgressDialog.show(this, "Looking for OBD adapters", "Plug the adapter into the bike and turn the ignition on…", true);
+        if (sc != null) sc.startScan(cb);
+        h.postDelayed(() -> {
+            if (sc != null) try { sc.stopScan(cb); } catch (Exception ignored) {}
+            wait.dismiss();
+            java.util.List<String> addr = new java.util.ArrayList<>(found.keySet());
+            addr.sort((a, b) -> Boolean.compare(!looksObd(found.get(a)[0]), !looksObd(found.get(b)[0])));   // OBD-looking names first
+            if (addr.isEmpty()) { android.widget.Toast.makeText(this, "No adapter found. Classic-Bluetooth ones: pair it in Bluetooth settings first", android.widget.Toast.LENGTH_LONG).show(); return; }
+            String[] names = new String[addr.size()];
+            for (int i = 0; i < names.length; i++) { String[] f = found.get(addr.get(i)); names[i] = f[0] + (f[1].equals("le") ? "  ·  Bluetooth LE" : "  ·  paired"); }
+            new android.app.AlertDialog.Builder(this).setTitle("Choose your OBD adapter").setItems(names, (dlg, i) -> {
+                String[] f = found.get(addr.get(i));
+                settings.obd(addr.get(i), f[0], f[1].equals("classic"));
+                label.setText("Adapter: " + f[0]);
+            }).setNegativeButton("Cancel", null).show();
+        }, 6000);
+    }
+
+    private static boolean looksObd(String n) {
+        String u = n.toUpperCase(java.util.Locale.ROOT);
+        return u.contains("OBD") || u.contains("ELM") || u.contains("VGATE") || u.contains("V-LINK") || u.contains("VLINK") || u.contains("ICAR") || u.contains("KONNWEI") || u.contains("VEEPEAK") || u.contains("CAN");
     }
 
     // ---- wallpaper ----

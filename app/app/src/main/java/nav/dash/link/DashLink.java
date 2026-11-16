@@ -120,6 +120,12 @@ public final class DashLink {
     public State state() { return state; }
     public boolean streaming() { return state == State.STREAMING; }
 
+    /** Bike-data probe: sees every message the dash sends (handshake excluded) while set. */
+    public volatile java.util.function.Consumer<K1g.Tlv> rawTap;
+
+    /** Bike-data probe: send one request-shaped message (type/sub/value) to the dash. */
+    public void probe(int type, int sub, byte[] value) { send(K1g.build(K1g.tlv(type, sub, value))); }
+
     // ================= lifecycle =================
     public synchronized void start() {
         if (wanted) return;
@@ -353,7 +359,10 @@ public final class DashLink {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
                 sock.receive(p);
                 lastRxMs = System.currentTimeMillis();
-                for (K1g.Tlv t : K1g.parse(p.getData(), p.getLength())) { count(t); handle(t); }
+                for (K1g.Tlv t : K1g.parse(p.getData(), p.getLength())) {
+                    count(t); handle(t);
+                    java.util.function.Consumer<K1g.Tlv> tap = rawTap; if (tap != null && t.type != 0x07) tap.accept(t);   // bike-data probe recorder
+                }
             } catch (SocketTimeoutException ignored) {
             } catch (Exception e) {
                 if (wanted && !sock.isClosed()) Log.w(TAG, "rx: " + e.getMessage());

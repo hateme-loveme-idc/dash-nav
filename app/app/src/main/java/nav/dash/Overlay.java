@@ -30,6 +30,28 @@ final class Overlay {
 
     static Paint fill(int c) { Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); p.setColor(c); return p; }
 
+    // ---- RPM bar: flat segments along the top rim of the round dial (stock-dash style) ----
+    static final int RPM_SEGMENTS = 18;
+    private final Paint seg = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private float shownRpm = -1;
+
+    /** rpm < 0 draws nothing. mapDark picks white segments (dark map) or near-black ones (light map). */
+    void drawRpm(Canvas c, int rpm, int maxRpm, int redline, boolean mapDark) {
+        if (rpm < 0) { shownRpm = -1; return; }
+        shownRpm = shownRpm < 0 ? rpm : shownRpm + (rpm - shownRpm) * 0.6f;    // a little smoothing between frames
+        float r = W / 2f - 9, cx = W / 2f, cy = W / 2f;                          // the dial's circle (see halfChord)
+        RectF oval = new RectF(cx - r, cy - r, cx + r, cy + r);
+        float start = 192, sweep = 156, step = sweep / RPM_SEGMENTS, gap = 2.2f;
+        int lit = Math.round(Math.min(1f, shownRpm / maxRpm) * RPM_SEGMENTS);
+        int on = mapDark ? 0xFFFFFFFF : 0xFF1B1E23, off = mapDark ? 0x5CFFFFFF : 0x4D1B1E23, red = 0xFFE53935;
+        seg.setStyle(Paint.Style.STROKE); seg.setStrokeWidth(7); seg.setStrokeCap(Paint.Cap.BUTT);
+        for (int i = 0; i < RPM_SEGMENTS; i++) {
+            boolean isRed = (i + 1) * (float) maxRpm / RPM_SEGMENTS > redline;
+            seg.setColor(i < lit ? (isRed ? red : on) : off);
+            c.drawArc(oval, start + i * step + gap / 2, step - gap, false, seg);
+        }
+    }
+
     void draw(Canvas c, NavState.Nav s) {
         if (!s.active()) return;
         // ---- turn card ----

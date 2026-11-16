@@ -76,6 +76,12 @@ public class DashService extends Service {
 
     static volatile String status = "Ready", linkStatus = "", detail = "", lastJoystick = "";
     static volatile boolean active;
+    /** The running OBD link (for the settings screen's status line), or null. */
+    static volatile ObdLink obdNow;
+    static volatile float speedKmh;
+    /** Bike-data probe progress for the settings screen ("" = never run). */
+    static volatile String probeStatus = "";
+    static volatile DashLink linkNow;
     private volatile boolean running, panelOff, riderDark, mapsOnDash, movingMaps;
     private volatile int callPhase, fps = FPS_START, displayId = -1;   // callPhase: 0 none, 1 ringing, 2 in a call
     private volatile long callStart, navLostAt, lastPowerAt, arrivedAt;
@@ -122,6 +128,12 @@ public class DashService extends Service {
             fgs |= ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;   // scan for the dash Wi-Fi + GPS with the screen off
         startForeground(1, note("Starting…"), fgs);
         if (intent != null && intent.getBooleanExtra("stop", false)) { stopAll(); return START_NOT_STICKY; }
+        if (intent != null && intent.getBooleanExtra("probe", false)) {   // "Test bike data" (settings screen)
+            DashLink l = linkNow;
+            if (running && l != null && l.streaming()) { RideLog.add("bike data test started"); BikeProbe.start(this, l, obd); }
+            else probeStatus = "Connect to the bike first (Start on dash, ignition on)";
+            return START_NOT_STICKY;
+        }
         if (BuildConfig.DEBUG && intent != null && intent.hasExtra("fake_call")) { fakeCall(intent.getStringExtra("fake_call")); return START_NOT_STICKY; }
         if (running) return START_NOT_STICKY;
         settings = new Settings(this);
@@ -131,6 +143,8 @@ public class DashService extends Service {
             if (intent.hasExtra("dash_turn_circle")) settings.dashTurnCircle(intent.getBooleanExtra("dash_turn_circle", false));
             wifiPrefix = intent.getStringExtra("wifi_prefix");
             if (intent.hasExtra("wallpaper")) settings.wallpaper(intent.getBooleanExtra("wallpaper", false));
+            fakeRpm = intent.getBooleanExtra("fake_rpm", false);   // sweeps the RPM bar without an OBD adapter
+            if (intent.hasExtra("rpm_bar")) settings.rpmBar(intent.getBooleanExtra("rpm_bar", false));
         }
         dest = intent == null ? null : intent.getStringExtra("dest");
         if (dest != null && dest.trim().isEmpty()) dest = null;
@@ -186,7 +200,12 @@ public class DashService extends Service {
                 @Override public void onDashLearned(String ssid, String bssid) { settings.dash(ssid, bssid); }
                 @Override public void onUserCancelled() { set("Cancelled"); running = false; }
             });
-            link.start();
+            link.start(); linkNow = link;
+            if (settings.rpmBar() && !settings.obdAddress().isEmpty()
+                    && checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                obd = new ObdLink(this, settings.obdAddress(), settings.obdClassic()); obd.start(); obdNow = obd;
+                RideLog.add("rpm bar: OBD adapter " + (settings.obdClassic() ? "(classic Bluetooth)" : "(Bluetooth LE)"));
+            }
 
             Overlay overlay = new Overlay();
             Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG);
@@ -234,6 +253,7 @@ public class DashService extends Service {
                                 fps, (sent - sentAtStat) / secs, (v.bytes - bytesAtStat) * 8 / secs / 1000, v.keyframes - keysAtStat,
                                 l.acksFrame - ackFAtStat, l.acksKey - ackKAtStat, mapsOnDash ? "yes" : "no", batteryTemp()));
                         String msgs = l.messageSummary(); if (!msgs.isEmpty()) RideLog.add("dash sent: " + msgs);
+                        ObdLink o = obd; if (o != null) RideLog.add("rpm bar: " + o.status);
                         sentAtStat = sent; bytesAtStat = v.bytes; keysAtStat = v.keyframes; ackFAtStat = l.acksFrame; ackKAtStat = l.acksKey; lastStat = t0;
                     } else if (lastStat == 0) { lastStat = t0; sentAtStat = sent; bytesAtStat = v.bytes; keysAtStat = v.keyframes; ackFAtStat = l.acksFrame; ackKAtStat = l.acksKey; }
                     sentAtAdapt = sent; ackedAtAdapt = acked; lastAdapt = t0;
@@ -293,6 +313,13 @@ public class DashService extends Service {
     }
 
     private volatile long blackSince; private volatile int blackFixes;
+    private volatile ObdLink obd; private volatile boolean mapDark = true, fakeRpm;
+
+    /** Engine RPM for the bar: the OBD adapter's live reading, the debug sweep, or -1 (bar hidden). */
+    private int currentRpm() {
+        if (BuildConfig.DEBUG && fakeRpm) { double t = SystemClock.elapsedRealtime() / 1000.0; return (int) (1500 + 3700 * (1 - Math.cos(t * 0.9))); }
+        ObdLink o = obd; return o == null ? -1 : o.liveRpm();
+    }
 
     /** Maps on the dash but drawing nothing (seen on a real ride: black map behind the turn card): log it and bring Maps
      *  to the front of the hidden display, which makes it draw again. At most 3 nudges per takeover. */
@@ -301,12 +328,14 @@ public class DashService extends Service {
         if (frame != null) {
             try {
                 Bitmap soft = frame.copy(Bitmap.Config.ARGB_8888, false);
-                int w = soft.getWidth(), h = soft.getHeight(), dark = 0, n = 0;
+                int w = soft.getWidth(), h = soft.getHeight(), dark = 0, n = 0; long lum = 0;
                 for (int y = 1; y < 8; y++) for (int x = 1; x < 12; x++) {
                     int c = soft.getPixel(x * w / 12, y * h / 8); n++;
-                    if (((c >> 16 & 0xFF) * 3 + (c >> 8 & 0xFF) * 6 + (c & 0xFF)) / 10 < 10) dark++;
+                    int l = ((c >> 16 & 0xFF) * 3 + (c >> 8 & 0xFF) * 6 + (c & 0xFF)) / 10; lum += l;
+                    if (l < 10) dark++;
                 }
                 soft.recycle(); black = dark >= n * 0.97;
+                mapDark = lum / n < 110;   // Maps' night theme: white RPM segments; day theme: dark ones
             } catch (Exception e) { return; }
         }
         if (!black) { if (blackSince > 0) RideLog.add("maps: drawing again"); blackSince = 0; return; }
@@ -392,7 +421,10 @@ public class DashService extends Service {
 
     private void paintFrame(Canvas c, Bitmap frame, NavState.Nav nav, Overlay overlay, Paint filter, Rect dst) {
         c.drawColor(Color.BLACK);
-        if (mapsOnDash && nav.active() && frame != null) { c.drawBitmap(frame, CROP, dst, filter); overlay.draw(c, nav); }
+        if (mapsOnDash && nav.active() && frame != null) {
+            c.drawBitmap(frame, CROP, dst, filter); overlay.draw(c, nav);
+            if (settings.rpmBar()) overlay.drawRpm(c, currentRpm(), settings.rpmMax(), settings.rpmRedline(), mapDark);
+        }
         else overlay.drawIdle(c, wallpaper(), clock(), mapsOnDash ? "Navigation ended" : "Start navigation in Google Maps");
         // calls show on the dash's own band (pushBand), never over the map: navigation stays fully visible
         overlay.drawUi(c, menuOpen ? MENU : null, menuSel, badgeText(), hintText());
@@ -641,6 +673,7 @@ public class DashService extends Service {
         gps = loc -> {
             lastFix = SystemClock.elapsedRealtime();
             if (loc.hasBearing() && loc.hasSpeed() && loc.getSpeed() > 1.5f) heading = Math.round(loc.getBearing());
+            speedKmh = loc.hasSpeed() ? loc.getSpeed() * 3.6f : 0;
         };
         try { getSystemService(android.location.LocationManager.class).requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 1000, 0, gps, Looper.getMainLooper()); }
         catch (Exception e) { Log.w(TAG, "gps", e); }
@@ -660,6 +693,7 @@ public class DashService extends Service {
 
     private void stopAll() {
         running = false; active = false;
+        ObdLink o = obd; obd = null; obdNow = null; linkNow = null; BikeProbe.running = false; if (o != null) o.stop();
         if (screenOff != null) { try { unregisterReceiver(screenOff); } catch (Exception ignored) {} screenOff = null; }
         if (phoneDisplay != null) { getSystemService(DisplayManager.class).unregisterDisplayListener(phoneDisplay); phoneDisplay = null; }
         if (gps != null) { try { getSystemService(android.location.LocationManager.class).removeUpdates(gps); } catch (Exception ignored) {} gps = null; }
